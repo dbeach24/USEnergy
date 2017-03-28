@@ -1,0 +1,1004 @@
+---
+title: "US Energy Consumption Data Project"
+author: "David J. C. Beach"
+output:
+    html_notebook:
+        theme: united
+        toc: true
+        toc_depth: 3
+        toc_float: true
+        number_sections: true
+---
+
+# Motivation
+
+Energy trends are something I've been curious about, but have never spent any serious time to understand what the "big picture" looks like.  My wife has a degree in Chemical Engineering, and has worked on several energy-related projects.  When I found a dataset on Kaggle called [US Energy Census](https://www.kaggle.com/lislejoem/us_energy_census_gdp_10-14), I decided to investigate further.
+
+Reading the user comments on this dataset, I found a link to a [US Energy Resources Map](http://berc.berkeley.edu/wp-content/uploads/2013/06/Saxum_Energy_Final-Front.jpg).  After looking at it for a while, I was hooked on the topic.  I started by downloading the Kaggle dataset and exploring what it had to offer, however I quickly abandoned it for two reasons:
+
+  1. The energy categories seemed to be chosen almost arbitrarily from a larger dataset.  I wanted to get a complete "high-level" capture of energy production and consumption if I could, and I wasn't convinced that this dataset was giving me that.
+  2. Only year 2010-2014 were covered by the original data, and I wanted to get more historical data.
+
+I decided to explore the underlying information sources.  The next sections describe my adventures in data gathering and cleaning.
+
+# Data Preparation
+
+Here are the libraries I used to load, inspect, reshape, and clean the source data.
+
+```{r}
+library(data.table)
+library(plotly)
+library(reshape2)
+library(stringr)
+```
+
+## Data Range
+
+After some early reconnaissance, I discovered that I could probably collect energy data from all 50 states over the years 1960-2014, for a total of 55 years.  Here, I define some variables that will be used later in the data gathering and cleaning process.
+
+```{r}
+year.min = 1960
+year.max = 2014
+
+# 51 Codes = 50 States + District of Columbia
+state.codes = c(
+  "AL", "AK", "AZ", "AR", "CA",
+  "CO", "CT", "DE", "DC", "FL",
+  "GA", "HI", "ID", "IL", "IN",
+  "IA", "KS", "KY", "LA", "ME",
+  "MD", "MA", "MI", "MN", "MS",
+  "MO", "MT", "NE", "NV", "NH",
+  "NJ", "NM", "NY", "NC", "ND",
+  "OH", "OK", "OR", "PA", "RI",
+  "SC", "SD", "TN", "TX", "UT",
+  "VT", "VA", "WA", "WV", "WI",
+  "WY"
+)
+
+final.rows = (year.max - year.min + 1) * length(state.codes)
+```
+
+## Energy Consumption Data
+
+Energy consumption data was taken from the [US Energy Information Administration (EIA)](http://www.eia.gov).  I was able to find a dataset (in CVS format), along with documentation that explained the precise meaning of all the energy variables.
+
+* Webpage: https://www.eia.gov/state/seds/seds-data-complete.php#CompleteDataFile
+* Dataset: https://www.eia.gov/state/seds/sep_use/total/csv/use_all_btu.csv
+* Docs: https://www.eia.gov/totalenergy/data/annual/index.php
+
+This dataset has hundreds of variables for each state over the full 55 year range.  Substantial reshaping of the data was necessary to get a dataset that had one row per state per year, and one unique column for each energy variable.
+
+```{r}
+euse.raw = read.csv("source_data/use_all_btu.csv", header=T, stringsAsFactors=F)
+
+# Drop Data_Status column (unneeded)
+euse.tmp = euse.raw[,-1]
+
+# Melt across the year columns
+euse.tmp = melt(euse.tmp, id.vars=c("State", "MSN"))
+
+# Convert year to integer column
+euse.tmp$year = as.integer(str_sub(euse.tmp$variable, start=2, end=-1))
+
+# Drop unneeded "variable" column
+euse.tmp = euse.tmp[
+  euse.tmp$year >= year.min
+  & euse.tmp$year <= year.max
+  & is.element(euse.tmp$State, state.codes),
+  c("year", "State", "MSN", "value")
+]
+
+# Unmelt data by MSN attributes (1 per column)
+euse.tmp = data.table(
+   dcast(data=euse.tmp,
+         formula=year+State~MSN,
+         fun.aggregate=sum,
+         value.var="value")
+)
+
+euse.tmp = euse.tmp[order(year, State)]
+euse.cat = data.table(euse.tmp)
+
+# Sanity check
+print(nrow(euse.cat) == final.rows)
+```
+
+## Energy Production Data
+
+The EIA also provide information on energy production:
+
+* Webpage: https://www.eia.gov/state/seds/seds-data-complete.php#CompleteDataFile
+* Dataset: https://www.eia.gov/state/seds/sep_prod/xls/Prod_dataset.xlsx
+* Docs: https://www.eia.gov/state/seds/sep_prod/Prod_technotes.pdf
+
+A similar process was needed to reshape the data into the desired form.
+
+```{r}
+eprod.raw = read.csv("source_data/Prod_dataset.csv", header=T, stringsAsFactors=F)
+
+# Drop Data_Status column (unneeded)
+eprod.tmp = eprod.raw[,-1]
+
+# Melt across the year columns
+eprod.tmp = melt(eprod.tmp, id.vars=c("StateCode", "MSN"))
+
+# Convert year to integer column
+eprod.tmp$year = as.integer(str_sub(eprod.tmp$variable, start=2, end=-1))
+
+# Drop unneeded "variable" column
+eprod.tmp = eprod.tmp[
+  eprod.tmp$year >= year.min
+  & eprod.tmp$year <= year.max
+  & is.element(eprod.tmp$StateCode, state.codes),
+  c("year", "StateCode", "MSN", "value")
+]
+
+# Unmelt data by MSN attributes (1 per column)
+eprod.tmp = data.table(dcast(data=eprod.tmp,
+                  formula=year+StateCode~MSN,
+                  fun.aggregate=sum,
+                  value.var="value"))
+
+eprod.tmp = eprod.tmp[order(year, StateCode)]
+eprod.cat = data.table(eprod.tmp)
+
+# Sanity check
+print(nrow(eprod.cat) == final.rows)
+```
+
+## State Population Data
+
+I also wanted to have state population data, so that energy consumption could be computed on a per-capita basis.  The [US Census Bureau](https://www.census.gov) provides this information in the form of intercensal population estimates for each state.
+
+State Intercensal tables from: 
+
+* https://www.census.gov/programs-surveys/popest/data/tables.All.html
+
+Unfortunately, the data was spread across many reports and had to be hand-assembled using a spreadsheet before it could be loaded into R.  In addition, values before 1969 were reported in 1000s, so data was adjusted for this change of units.
+
+```{r}
+pop.raw = read.csv("source_data/census_pop_state_1960_2016.csv", header=T, stringsAsFactors=F)
+
+# Melt across the year columns
+pop.tmp = melt(pop.raw, id.vars=c("State"))
+
+# Convert year to integer column
+pop.tmp$year = as.integer(str_sub(pop.tmp$variable, start=2, end=-1))
+
+pop.tmp = pop.tmp[
+  pop.tmp$year >= year.min
+  & pop.tmp$year <= year.max
+  & is.element(pop.tmp$State, state.codes),
+  c("year", "State", "value")
+]
+
+# Years 1969 are prior are reported in thousands.
+# Adjust scale of these values to agree with rest of data.
+pop.tmp$value =pop.tmp$value * ifelse(pop.tmp$year <= 1969, 1000, 1)
+
+pop.tmp = data.table(pop.tmp)
+pop.tmp = pop.tmp[order(year, State)]
+pop.cat = pop.tmp
+
+# Sanity check
+print(nrow(pop.cat) == final.rows)
+```
+
+## State Land Area Data
+
+Some energy production seems like it could be correlated with land area.  Searching the US Census website, I was able to find a table with the land area for each state.
+
+State area measurements:
+
+* https://www.census.gov/geo/reference/state-area.html
+
+It was necessary to cut these values from HTML and paste them into a spreadsheet for ingestion into R.
+
+```{r}
+area.raw = read.csv("source_data/state_areas.csv", header=T, stringsAsFactors=F)
+
+area.tmp = area.raw[
+  is.element(area.raw$StateCode, state.codes),
+  c("StateName", "StateCode", "Land.Area.sqmi", "Latitude", "Longitude")
+]
+
+area.tmp = data.table(area.tmp)
+area.tmp = area.tmp[order(StateCode)]
+area.cat = area.tmp
+
+# Sanity check
+print(nrow(area.cat) == length(state.codes))
+```
+
+## State GDP
+
+Both energy production and consumption could be related to GDP.  Therefore, I wanted to find a table of GDP information that covered all the years in questions.  This turned out to be more challenging than I initially expected, and ultimately required some difficult judgement calls in joining disparate datasets and filling missing data.
+
+The [US Bureau of Economic Analysis (BEA)](https://www.bea.gov/) provides this information:
+
+  * https://www.bea.gov/itable/iTable.cfm?ReqID=70&step=1#reqid=70&step=4&isuri=1&7003=200&7001=1200&7002=1&7090=70
+
+Values are in billions of current (2015 or 2016) US Dollars.
+
+There is a discontinuity in the data at year 1997, where industry reporting switched from the CIS to FIPS industry classification system.  Data for 1997 is provided in both systems, allowing the impact of the discontinuity to be evaluated.  For the US totals, this results in a 3.12% difference, with the most affected state Wyoming showing a -8.49% change between systems.
+
+For this project, I have simply stitched these two datasets together.  The BEA gives a cautionary note about doing this.  Though sub-optimal, the impact of this discontinuity is deemed tolerable.
+
+The earliest available state GDP data is from 1963.  To generate state GDPs for 1960-1962, we use the percentage of the national GDP for each state from 1963, and allocate that portion of the national GDP for those earlier years.
+
+```{r, fig.height=10}
+
+gdp.cis.raw = read.csv("source_data/state_cis_gdp_1963_1997.csv", header=T, stringsAsFactors=F)
+
+# Drop the Fips and Area columns
+gdp.cis.tmp = gdp.cis.raw[, c(-1, -2)]
+
+# Melt across the year columns
+gdp.cis.tmp = melt(gdp.cis.tmp, id.vars=c("StateCode"))
+
+# Convert year to integer column
+gdp.cis.tmp$year = as.integer(str_sub(gdp.cis.tmp$variable, start=2, end=-1))
+
+# Rename some columns
+gdp.cis.tmp$state = gdp.cis.tmp$StateCode
+gdp.cis.tmp$GDP = gdp.cis.tmp$value
+
+# select desired data, only up to year 1996
+gdp.cis.tmp = gdp.cis.tmp[
+  gdp.cis.tmp$year >= year.min
+  & gdp.cis.tmp$year <= 1996
+  & is.element(gdp.cis.tmp$State, state.codes),
+  c("year", "state", "GDP")
+]
+
+gdp.naics.raw = read.csv("source_data/state_naics_gdp_1997_2015.csv", header=T, stringsAsFactors=F)
+
+# Drop the Fips and Area columns
+gdp.naics.tmp = gdp.naics.raw[, c(-1, -2)]
+
+# Melt across the year columns
+gdp.naics.tmp = melt(gdp.naics.tmp, id.vars=c("StateCode"))
+
+# Convert year to integer column
+gdp.naics.tmp$year = as.integer(str_sub(gdp.naics.tmp$variable, start=2, end=-1))
+
+# Rename some columns
+gdp.naics.tmp$state = gdp.naics.tmp$StateCode
+gdp.naics.tmp$GDP = gdp.naics.tmp$value
+
+# select desired data, only up to year 1996
+gdp.naics.tmp = gdp.naics.tmp[
+  gdp.naics.tmp$year >= 1997
+  & gdp.naics.tmp$year <= year.max
+  & is.element(gdp.naics.tmp$State, state.codes),
+  c("year", "state", "GDP")
+]
+
+# There are multiple breaks in the economic data between 1960-1963
+# - State GDP is only available from 1963 onward
+# - 1960-1962 US GDP is available in 1952 dollars
+# - 1962-1963 US GDP is available in 1972 dollars
+# We leverage all of this to compute translation factors into 2016 dollars.
+# State GDPs are then backfilled for 1960-1962 based on their
+# fraction of the 1963 GDP.
+
+# US GDP values in 1952 dollars
+gdp.1960 = 465.4
+gdp.1961 = 477.3
+gdp.1962 = 506.5
+
+# US GDP values in 1972 dollars
+gdp.1962x = 845.0
+gdp.1963x = 881.8
+
+# US GDP value computed in 1952 dollars
+gdp.1963 = gdp.1963x * (gdp.1962 / gdp.1962x)
+
+# Extract the 1963 State GDP data (this is our earliest true datapoint) 
+gdp.1963.states = gdp.cis.tmp[gdp.cis.tmp$year == 1963, "state"]
+gdp.1963.vals = gdp.cis.tmp[gdp.cis.tmp$year == 1963, "GDP"]
+gdp.1963.sum = sum(gdp.1963.vals)
+
+# Estimate 1960-1962 State GDPs
+gdp.1962.vals = gdp.1963.vals * (gdp.1962 / gdp.1963)
+gdp.1961.vals = gdp.1963.vals * (gdp.1961 / gdp.1963)
+gdp.1960.vals = gdp.1963.vals * (gdp.1960 / gdp.1963)
+
+gdp.pre1963.tmp = data.table(
+  year=rep(c(1960, 1961, 1962), each=length(state.codes)),
+  state=rep(gdp.1963.states, times=3),
+  GDP=c(gdp.1960.vals, gdp.1961.vals, gdp.1962.vals)
+)
+
+gdp.all.tmp = rbind(gdp.pre1963.tmp, gdp.cis.tmp, gdp.naics.tmp)
+
+gdp.all.tmp = data.table(gdp.all.tmp)
+gdp.all.tmp = gdp.all.tmp[order(year, state)]
+gdp.all.cat = gdp.all.tmp
+
+# Sanity check
+print(nrow(gdp.all.cat) == final.rows)
+```
+
+This serves as a visual check of the compiled state GDP data.  Interestingly, the only aberration that can be consistently and easily seen across most states is the 2008 recession.
+
+```{r}
+ggplot(gdp.all.cat, aes(x=year, y=GDP, group=state)) + geom_line(aes(color=state))
+```
+
+
+## Joining Data
+
+All of the data frames from the previous cleaning efforts now need to be joined into a master table.  The following code creates this final data frame:
+
+```{r}
+energy.all = data.table(
+  year = euse.cat$year,
+  state = euse.cat$State,
+  state.name = rep(area.cat$StateName, times=(year.max - year.min + 1)),
+  gdp = gdp.all.cat$GDP,
+  population = pop.cat$value,
+  area = rep(area.cat$Land.Area.sqmi, times=(year.max - year.min + 1)),
+  latitude = rep(area.cat$Latitude, times=(year.max - year.min + 1)),
+  longitude = rep(area.cat$Longitude, times=(year.max - year.min + 1))
+)
+
+# Energy Prodution Data
+for(col in colnames(eprod.cat)[c(-1,-2)]) {
+  energy.all[, col] = eprod.cat[, get(col)]
+}
+
+# Energy Consumption Data
+for(col in colnames(euse.cat)[c(-1,-2)]) {
+  energy.all[, col] = euse.cat[, get(col)]
+}
+
+# Sanity check
+print(nrow(energy.all) == final.rows)
+```
+
+## Sanity Checks
+
+Using variations of the plot below, I performed some visual inspection to ensure:
+
+ - land areas are constant,
+ - US (and most state) GDP increases exponentially (with exception of 2008 recession), and
+ - most state populations increase relatively smoothly.
+
+The data look reasonable.  For example, the following graph shows the national GDP (computed as a sum of state GDPs) from 1960 to 2014:
+
+```{r}
+ggplot(energy.all[, .(gdp=sum(gdp)), by=.(year)], aes(x=year, y=gdp)) + geom_line()
+```
+
+We can see that there are no serious discontinuities in the data at 1963 or at 1997.  Again, there is a visible dip at the 2008 recession.
+
+## Summary Plot
+
+The shiny app will include a time range selector, which might be easier to understand with an associated graph.
+
+Here, we make a simple summary plot which shows the total energy consumption across the US from 1960-2014.  Since this plot is part of an on-screen control that is merely meant to communicate a trend, the title and axis labels are omitted.
+
+```{r fig.width=6, fig.height=3}
+(ggplot(energy.all[, .(demand=sum(TETCB)), by=.(year)], aes(x=year, y=demand))
+ + geom_area(color='#B0B0B0', fill='#B0B0B0')
+ + xlab(NULL)
+ + ylab(NULL)
+ + theme(
+    panel.background=element_rect(fill="transparent", color=NA), 
+    plot.background=element_rect(fill="transparent", color=NA),
+    panel.grid.major=element_blank(),
+    panel.grid.minor=element_blank(),
+    axis.ticks=element_blank(),
+    axis.text=element_blank(),
+    plot.margin = unit(c(0,0,0,0), "in"),
+    panel.border = element_blank()
+))
+ggsave("www/EDemandOverview.png")
+```
+
+## Identify Significant Variables
+
+The next step involves identifying the significant energy variables in the data.  There are hundreds of variables in the available data, yet many of them are unlikely to be interesting to the casual user.  I want to create a data product which has broad appeal to users and which helps communicate the "big picture" of energy production and consumption.  Therefore, its important to determine which values are of interest.
+
+Many of the energy values express a production or consumption in units of "Billions of BTUs."  We can get a sense of which of these variables are significant by comparing their magnitude to that of the TETCB (Total Energy Consumption in Billions of BTUs) column.
+
+The following graph makes this comparison and display all variables whose national values comprise at least 1% of this total consumption:
+
+```{r}
+# column names ending in TCB are energy totals for a particular category
+totalcols = colnames(energy.all)[str_detect(colnames(energy.all), "..TCB")]
+
+totalenergy = sum(energy.all[year==2014]$TETCB)
+
+colfracs = c()
+
+for(col in totalcols) {
+  colsum = sum(energy.all[year==2014, get(col)])
+  colfrac = colsum / totalenergy
+  colfracs = append(colfracs, colfrac)
+}
+
+energykinds = data.table(kind=totalcols, value=colfracs)
+
+significantkinds = energykinds[value > 0.01][order(value, decreasing=T)]
+
+ggplot(significantkinds, aes(kind, value)) + geom_col() + coord_flip()
+```
+
+We will use the above graph as a reference to help gauge the significance of a given variable when thinking about the "big picture" of US energy.
+
+## Energy Breakdown
+
+The EIA includes a [comprehensive appendix](https://www.eia.gov/state/seds/sep_use/notes/use_a.pdf) labeling the categories of energy expenditure and the formulas used to break them down.  Using the formulas provided in this appendix (and making certain careful variable substitutions) we arrive at the following energy breakdown.
+
+Items in bold have been identified as having significant values in the previous step.
+
+### Total Energy
+
+> Total Energy (**TETCB**) = **FFTCB** + NUETB + **RETCB** + ELNIB + ELISB
+>
+> where:
+> 
+> - **FFTCB** = Fossil Fuels
+> - NUETB = Nuclear energy (for electricity)
+> - **RETCB** = Renewable Energy
+> - ELNIB = Net Import Energy
+> - ELISB = Net Interstate Flow
+
+### Fossil Fuels
+
+Fossil fuels can be broken down using the following formula:
+
+> Fossil Fuels (**FFTCB**) = **CLTCB** + **NNTCB** + **PMTCB**
+>
+> where:
+>
+> - **CLTCB** = Coal
+> - **NNTCB** = Natural Gas
+> - **PMTCB** = Petroleum (excl fuel ethanol blended into gas)
+
+### Petroleum
+
+Petroleum is a major component of fossil fuels, and can be further divided as follows:
+
+> Petroleum (**PMTCB**) = ARTCB + AVTCB + **DFTCB** + **JFTCB** + KSTCB + **LGTCB** + LUTCB + **MMTCB** + RFTCB + **POTCB**
+>
+> where:
+>
+> - ARTCB = Asphalt and Road Oil
+> - AVTCB = Aviation Gasoline
+> - **DFTCB** = Distillate Fuel Oil
+> - **JFTCB** = Jet Fuel
+> - KSTCB = Kerosene
+> - **LGTCB** = LPG (Liquid Propane Gas)
+> - LUTCB = Lubricants
+> - **MMTCB** = Motor Gasoline (excluding fuel ethanol)
+> - RFTCB = Residential Fuel Oil
+> - **POTCB** = Petroleum (other)
+
+There are 5 significant categories (Distillate Fuel, Jet Fuel, LPG, Motor Gasoline, and Petroleum Other), and 5 relatively insignificant categories (less than 1% of total energy each in 2014).  Because this breakdown includes so many categories already, it is helpful to combine the less significant in with the "Other" category, giving:
+
+> Petroleum (**PMTCB**) = **DFTCB** + **JFTCB** + **LGTCB** + **MMTCB** + **POTCB2**
+>
+> where:
+>
+> - **DFTCB** = Distillate Fuel Oil
+> - **JFTCB** = Jet Fuel
+> - **LGTCB** = LPG (Liquid Propane Gas)
+> - **MMTCB** = Motor Gasoline (excluding fuel ethanol)
+> - **POTCB2** = **POTCB** + ARTCB + AVTCB + KSTCB + LUTCB
+
+This should make the final breakdown more manageable for the user.
+
+```{r}
+energy.all$POTCB2 = energy.all$POTCB + energy.all$ARTCB + energy.all$AVTCB + energy.all$KSTCB + energy.all$LUTCB
+```
+
+
+### Renewable Energy
+
+Renewables break down into an easily managed set.
+
+> Renewable Energy (RETCB) = WWTCB + EMTCB + GETCB + HYTCB + SOTCB + WYTCB
+> 
+> where:
+> 
+> - **WWTCB** = Biomass energy
+> - **EMTCB** = Fuel Ethanol
+> - GETCB = Geothermal energy
+> - **HYTCB** = Hydropower
+> - SOTCB = Photovoltaic and Solar
+> - **WYTCB** = Wind Energy
+
+## Review of Categories
+
+```{r}
+categories = c(
+  "NUETB",
+  "ELNIB",
+  "ELISB",
+  "CLTCB",
+  "NNTCB",
+  "DFTCB",
+  "JFTCB",
+  "LGTCB",
+  "MMTCB",
+  "POTCB2",
+  "BMTCB",
+  "GETCB",
+  "HYTCB",
+  "SOTCB",
+  "WYTCB"
+)
+
+totalenergy = sum(energy.all[year==2014]$TETCB)
+colfracs = c()
+for(col in categories) {
+  colsum = sum(energy.all[year==2014, get(col)])
+  colfrac = colsum / totalenergy
+  colfracs = append(colfracs, colfrac)
+}
+
+energykinds = data.table(kind=categories, value=colfracs)
+ggplot(energykinds, aes(kind, value)) + geom_col() + coord_flip()
+```
+
+The columns ELNIB and ELISB contain both negative and positive values, thus the near-zero relative sizes in the graph above are misleading.  Since we are examining energy production and consumption on a state level, we'll combine these columns in to a total column whose value is represent the net import or export.
+
+We split the result into two columns based on the sign of the value.  One for imported amount and another for exported amount.
+
+```{r}
+net.import = energy.all$ELNIB + energy.all$ELISB
+energy.all$import = ifelse(net.import > 0, net.import, 0)
+energy.all$export = ifelse(net.import < 0, -net.import, 0)
+```
+
+Imported energy will be included as a production category and exported energy will be included as a consumption category.
+
+Therefore we get:
+
+> Total Consumption (**TETCB2**) = **FFTCB** + **NUETB** + **RETCB** + export
+>
+> where:
+> 
+> - **FFTCB** = Fossil Fuels
+> - **NUETB** = Nuclear energy (for electricity)
+> - **RETCB** = Renewable Energy
+> - **export** = Exported Energy
+
+This leaves us with a fairly manageable 13 categories on the energy consumption side.
+
+```{r}
+categories.consume = data.table(
+  code = c(
+    "export",
+    "NUETB",
+    "CLTCB",
+    "NNTCB",
+    "DFTCB",
+    "JFTCB",
+    "LGTCB",
+    "MMTCB",
+    "POTCB2",
+    "ESTCB"
+  ),
+  name = c(
+    "Export",
+    "Nuclear",
+    "Coal",
+    "Natural Gas",
+    "Distillate Fuel",
+    "Jet Fuel",
+    "Propane",
+    "Gasoline",
+    "Other Petroleum",
+    "Electricity"
+  ),
+  color = c(
+    "#C0C0C0", # import/export grey
+    "#fc8d59", # nuclear orange
+    "#737373", # coal grey
+    "#6baed6", # natural gassy blue
+    "#dadaeb", # petroleum purple 1
+    "#bcbddc", # petroleum purple 2
+    "#9e9ac8", # petroleum purple 3
+    "#807dba", # petroleum purple 4
+    "#6a51a3", # petroleum purple 5
+    "#ffeda0"  # electric yellow
+  ),
+  multiplier = -1
+)
+```
+
+This function is used to produce the remaining graphics:
+
+```{r}
+tornadoPlot = function(X, cats, divisor="abs") {
+  data <- X
+
+  stateFont <- list(family="Helvetica", size=14, weight="bold")
+  
+  if(nrow(cats) == 0) {
+    # special logic to handle 0 category case
+    cats <- data.table(
+      code=c("TETCB"),
+      name=c("Total Energy"),
+      color=c("#80C0FF"),    
+      multiplier=1
+    )
+  }
+  
+  data$total <- 0
+  for(i in 1:nrow(cats)) {
+    code <- cats$code[i]
+    data$total <- data$total + data[, get(code)]
+  }
+  if(divisor != "abs") {
+    data$total <- (data$total / data[, get(divisor)])
+  }
+  
+  data <- data[order(data$total, decreasing=T)]
+  data$state = factor(data$state, levels=data$state[51:1])
+
+  if(divisor == "abs") {
+    divcol = 1
+  } else {
+    divcol = data[, get(divisor)]
+  }
+  
+  code <- cats$code[1]
+  name <- cats$name[1]
+  color <- cats$color[1]
+  multiplier <- cats$multiplier[1]
+  plot <- plot_ly(data,
+                  y=~state,
+                  x=signif(data[, get(code)] * multiplier / divcol, 3),
+                  name=name,
+                  marker=list(color=color),
+                  type="bar",
+                  orientation="h")
+  
+  if(nrow(cats) >= 2) { 
+    for(i in 2:nrow(cats)) {
+      code <- cats$code[i]
+      name <- cats$name[i]
+      color <- cats$color[i]
+      multiplier <- cats$multiplier[i]
+      plot <- plot %>% add_trace(
+        x=signif(data[, get(code) * multiplier / divcol], 3),
+        name=name,
+        marker=list(color=color)
+      )
+    }
+  }
+  
+  plot <- plot %>% layout(
+    yaxis=list(title=""),
+    yaxis=list(title="", tickfont=stateFont),
+    barmode="relative")
+
+  return(plot)
+}
+```
+
+
+## Energy Consumption by State
+
+Let's look at the per-state breakdown of these energy categories:
+
+
+```{r, fig.height=10, fig.width=8}
+tornadoPlot(energy.all[year==2014], categories.consume)
+```
+
+## Energy Production
+
+Here we examine the variables related to energy production.
+
+> Energy Production = CLPRB + PAPRB + NGMPB + EMPRB + NUETB + ROPRB
+> 
+> where:
+> 
+> - CLPRB = Coal production
+> - PAPRB = Crude Oil production
+> - NGMPB = Natural Gas marketed production
+> - EMPRB = Fuel Ethanol production (excluding denaturant)
+> - NUETB = Nuclear electic power consumed
+> - ROPRB = Renewable Production
+
+> Renewable production:
+> ROPRB = GETCB + HYTCB + SOTCB + WYTCB + WWTCB + EMTCB
+>
+> where:
+>
+> - GETCB = Geothermal consumption
+> - HYTCB = Hydroelectric
+> - SOTCB = Solar thermal and photovoltaic
+> - WYTCB = Wind Energy consumption
+> - WWTCB = Wood and biomass energy consumption
+> - EMTCB = Fuel Ethanol
+
+```{r}
+categories.produce = data.table(
+  code=c(
+    "import",
+    "CLPRB",
+    "NGMPB",
+    "PAPRB",
+    "NUETB",
+    "EMTCB",
+    "WWTCB",
+    "GETCB",
+    "HYTCB",
+    "SOTCB",
+    "WYTCB"
+  ),
+  name=c(
+    "Import",
+    "Coal",
+    "Natural Gas",
+    "Crude Oil",
+    "Nuclear",
+    "Ethanol",
+    "Biomass",
+    "Geothermal",
+    "Hydroelectric",
+    "Solar",
+    "Wind"
+  ),
+  color=c(
+    "#c0c0c0", # import/export grey
+    "#737373", # coal grey
+    "#6baed6", # natural gassy blue
+    "#807dba", # petroleum purple 4
+    "#fc8d59", # nuclear orange
+    "#e5f5e0", # renewable green 1
+    "#c7e9c0", # renewable green 2
+    "#a1d99b", # renewable green 3
+    "#74c476", # renewable green 4
+    "#41ab5d", # renewable green 5
+    "#238b45"  # renewable green 6
+  ),
+  multiplier=1
+)
+```
+
+The renewable energy variables (Ethanol, Biomass, Geothermal, Hydroelectric, Solar, and Wind) appear both on the consumption and production sides.  However, it is confusing to label the same variable both as a production and consumption value.  It can be argued that most renewable energy is produced in the form of Ethanol, Biomass, etc., but is consumed as electric power.  Therefore, we remove these variable form the consumption side (but keep them as energy production variables).  To help reflect the consumption side of green energy, we include a variable for electric power consumed.
+
+Here is a graph of all energy production variables in 2014:
+
+```{r, fig.height=10, fig.width=8}
+tornadoPlot(energy.all[year==2014], categories.produce)
+```
+
+And here is a graph showing both energy production and consumption in 2014:
+
+```{r, fig.height=10, fig.width=8}
+tornadoPlot(energy.all[year==2014], rbindlist(list(categories.produce, categories.consume)))
+```
+
+## Final Round of Data Cleaning
+
+After exploring the data, a handful of additional data cleaning issues were identified.  This second iteration of data clearning is described here.
+
+### Unxpected Negative Values
+
+An examination of the data using the plotting tool revealed unexpected negative values.  Values for consumption and production should not be negative.  This code was used to identify variables with negative values:
+
+```{r}
+codes = union(categories.produce$code, categories.consume$code)
+
+for(code in codes) {
+  column = energy.all[, get(code)]
+  negs = column[column < 0]
+  if(length(negs) > 0) {
+    print(code)
+    print(negs)
+  }
+}
+```
+
+This shows that there are only a small number of negative values in the Nuclear and Wind categories, and some slightly bigger values in the Hydroelectric.
+
+According to a technical Notes found in the EIA Production dataset documentation, negative values constitute cases where the energy production cost exceeded the output.  These cases are rare enough, and the magnitude is small, so we will simply zero-out these negative values from the dataset:
+
+```{r}
+for(code in c("NUETB", "HYTCB", "WYTCB")) {
+  column = energy.all[, get(code)]
+  column = ifelse(column >= 0, column, 0)
+  energy.all[, code] = column
+}
+```
+
+### Drop unnecessary columns
+
+Before saving a final "cleaned" dataset, it is helpful to remove all of the unused variables.  This makes the dataset significantly smaller, which is especially good since this will be deployed as a shiny app:
+
+```{r}
+keep.columns = c(categories.produce$code, categories.consume$code,
+                 "year", "state", "state.name", "population",
+                 "area", "gdp", "latitude", "longitude", "TETCB")
+
+drop.columns = c()
+
+for(colname in colnames(energy.all)) {
+  if(!is.element(colname, keep.columns)) {
+    drop.columns = append(drop.columns, colname)
+    energy.all[, colname] = NULL
+  }
+}
+
+drop.columns
+```
+
+### Drop District of Columbia
+
+Washington, DC behaves more like a city than a state.  It is essentially a non-producer and small consumer of energy, but it blows the curve when performing any land area comparisons, due to its tiny geographic size.  Therefore, we'll drop it from the 50 states data table.
+
+```{r}
+energy.all <- energy.all[state != "DC"]
+```
+
+## Store the Cleaned Data
+
+We have finished cleaning the data.  Here, we save the resulting file for use in the interactive app:
+
+```{r}
+write.csv(energy.all, "cleaned_data/energy_all.csv")
+```
+
+
+# Clustering Similar States
+
+For the machine learning aspect of this project, I chose to use the k-Means algorithm as a tool for grouping states with similar energy profiles.  The hope is that k-Means will allow states with similar energy profiles to be grouped together in a way that is useful and intuitive for the general user who wants to get a "big-picture" understanding of the data.
+
+This section of my notebook documents this exploration.
+
+## Proportional Vectors
+
+For a give set of user inputs, each state can be thought of as a multi-dimensional point with various values in the selected production and consumption categories.  If the user selects all possible categories, there could be up to 21 dimensions.  In more typical cases, we expect the user to select two to six different categories for clustering.
+
+The wide variations in population and energy production and consumption among different states poses a challenge for the k-Means algorithm.  If the data were clustered in raw form, then the clustering would tend to group states based on the absolute magnitude of their energy values.  However, a smaller state may have a very similar profile to a larger state.  Therefore, we transform the data before grouping by dividing each state's energy variables by the total energy among all selected categories for that state.  In other words, we convert each state's point data into a vector of proportions that sums to one.
+
+## k-Means Logic
+
+The following code shows some experimentation with k-Means clustering, using the energy categories Solar (SOTCB), Biomass (WWTCB), and Coal (CLTCB).
+
+First, we compute the sum of square error values for k = 1..20.
+
+```{r}
+library(cluster)
+
+df = energy.all[year==2014, .(
+  x1=SOTCB/(SOTCB+WWTCB+CLTCB),
+  x2=WWTCB/(SOTCB+WWTCB+CLTCB),
+  x3=CLTCB/(SOTCB+WWTCB+CLTCB)
+)]
+
+wss = kmeans(df, centers=1)$tot.withinss
+for (i in 2:20) {
+  wss[i] = kmeans(df, centers=i)$tot.withinss
+}
+```
+
+The follow code graphs the error as the number of clusters is increased:
+
+```{r}
+sse = data.frame(c(1:length(wss)), c(wss))
+names(sse)[1] = 'Clusters'
+names(sse)[2] = 'SSE'
+
+ggplot(sse, aes(Clusters, SSE)) + geom_line()
+```
+
+For this data, the error is fairly low at k=4 or k=5.  We'll use k=10 as an upper-limit for clustering in the user interface.
+
+Here is a cluster plot for k=5 centers:
+
+```{r}
+clus = kmeans(df, centers=5)
+
+clus$cluster = factor(clus$cluster, labels=unique(clus$cluster))
+
+clusplot(df, clus$cluster, color=T, shade=F, labels=0, lines=0,
+         main='k-Means Cluster Analysis')
+
+```
+
+This seems like a reasonable clustering of the data.  Hopefully this will provide some aid for users who are exploring the energy data.
+
+# Testing and Deployment
+
+## User Testing
+
+I wanted to be sure that the application would be intuitive for users.  Since the app would be hosted on the ShinyApps website, I took advantage of this to release an early version of the app to solicit feedback from users.
+
+### Questionairre
+
+Users were presented with an email including a short questionnaire.  Questions 1-3 were used to determine if the user could extract the correct answer from the application.  Questions 4-6 allowed the user to provide feedback.
+
+  1.  Which 3 states produced the most nuclear energy from 1970-1990?
+
+      Correct answer: IL, SC, PA
+
+  2.  Which state produced the most Coal per GDP from 2010-2014?
+
+      Correct answer: WY (followed by WV, MT)
+
+  3.  Name three states which have similar renewable (green) energy production from 2000-2010.
+
+      Many possible correct answers.  Answers were checked by grouping energy production using 3 centers and seeing if the states given by the user appeared in the same group.
+
+  4.  In browsing the energy data, did you learn anything that surprised you?  Describe.
+
+  5.  Did you find any of the controls or displays difficult to use/understand?  What could be improved?
+
+  6.  What features would you suggest adding to the application?
+
+
+### Results
+
+The questionnaire was emailed to 9 friends and acquaintances.  I received five responses.
+
+Here are the responses to questions 1-3:
+
+User | Q1 | Q2 | Q3
+---- | -- | -- | --
+1    | OK | OK | OK
+2    |  X | OK |  X
+3    | OK | OK | OK 
+4    | OK | OK | OK
+5    | OK | OK | OK
+
+Responses to Q4:
+
+ 1. WY beats WV for coal production
+ 2. ME PRODUCED SO MUCH BIOMASS ENERGY
+ 3. TX uses the most coal.  I would have assumed oil or natural gas.
+ 4. Washington and the amount of green energy per land area.
+ 5. The amount of nuclear that is still produced in our country.
+
+Responses to Q5:
+
+ 1. Very confused about "Groups of Similar Energy Profiles"  No idea really what that means. Suspect it was necessary for 3, but just guessing. No idea of what Energy Scale to use for #3.
+ 2. EASY TO UNDERSTAND
+ 3. I didn't understand how the groups of similar profiles works since the renewable one seems to have very very wide groups.
+ 4. Possibly putting a second label to distinguish categories within the "Production" and "Consumption" columns (like the green and purple segments).
+ 5. It was not initially intuitive, however it became clear quickly.  Visually separating the groups would be helpful.
+ 
+Responses to Q6:
+
+ 1. A political user profile, so you can give them answers they want to see... :-)  How about a quick help, or definition in a mouseover.
+ 2. PLACE A CLEAR ALL FOR EACH SIDE   THIS WILL MAKE IT QUICKER TO USE
+ 3. Having this run on solar powered servers.  Looks good.  Sliders worked well and looked nice.
+ 4. I would add either a drop-down menu or check box selection of all the states so that it can be filtered for ease of viewing.
+ 5. Not sure.
+
+These additional comments were unsolicited:
+
+ 1.
+ 2. VERY GOOD RESEARCH AND VERY EASY FORONE TO GET AND UNDERSTAND THE INFORMATION
+ 3.
+ 4. This looks great!
+ 5.
+
+### Analysis
+
+Based on the survey feedback, I made the following determinations:
+
+1. The grouping features was confusing to users.  Even users who appear to have used it successfully did not find it intuitive.  This could be due to the fact that "automatic grouping" is not a common feature in data browsing applications.  I have tried to remedy this confusion by adding clear labels to each group in the output graph, and including some explanatory text below the grouping control.
+
+2. Most users were learned something and were surprised by something in the data.  This is an encouraging indication that the application may at least be partially fulfilling its intended purpose.
+
+3. Several users had a request for some sort of additional controls.  I have added "Clear" buttons below the groups of checkboxes, as suggested by user #2.  Other improvements were not added due to time constraints.
+
+4. To explain the purpose of the application and to further assist users, a Users Guide was created and added as link from the data application.  When clicked, it opens the guide in a new browser window/tab.
+
+# Deployed Application
+
+The deployed application can be found here:
+
+* [The 50 States of US Energy](https://djbeach.shinyapps.io/usenergy/)
+* [User's Guide](https://djbeach.shinyapps.io/usenergy/_w_d72258d3/UserGuide.html)
+

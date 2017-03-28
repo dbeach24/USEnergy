@@ -1,0 +1,75 @@
+---
+title: "50 States of US Energy -- User's Guide"
+author: David J. C. Beach
+output:
+  html_document:
+    toc: true
+    toc_depth: 1
+    toc_float: true
+    theme: united
+---
+
+# Overview
+
+Have you ever wondered how energy production and consumotion are changing across the United States?
+
+* What is the current role of nuclear energy?
+* How much are new renewable sources (such as solar and wind) taking hold?
+* Does coal production look different today than it did in the 1970s?
+
+This interactive web application will help to answer these questions (and more).
+
+# Controls
+
+* The controls appear on the left hand side of the screen.
+* Changing the value of any control will cause the display to update.
+* Each control is described below.
+
+## Year Range
+
+* The Year Range control allows selection of any contiguous range of years between 1960 and 2014.
+* To change the selected range, simply drag the endpoints to the desired position.
+* You can also drag range by the blue bar in the middle to slide it to the left or right.
+
+## Consumption and Production
+
+* There are 20 energy categories, divided into consumption and production.
+* Each category label has a color which corresponds to the display on the right.
+* Some related energy types are grouped visually by similar colors.  For example:
+    * Purple hues -- energies involving oil or petroleum products
+    * Green hues -- renewable energies
+* These categories have corresponding (but different) production-side and consumption-side values:
+    * Import / Export
+    * Coal
+    * Natural Gas
+
+## Grouping Similar Energy Profiles
+
+* States can be grouped by their energy profile.
+* This employs k-means clustering to group states with similar energy production or consumption.
+* At least two energy categories must be checked.
+* States are clustered by the proportion of each production and consumption relative to that state's total in the selected categories.  This means that states with very different energy usage on an absolute scale may still be grouped together.
+
+## Energy Scale
+
+There are four energy scale options:
+
+* Absolute -- values are displayed as an absolute value of energy in Billions of BTUs
+* per GDP -- each state's values are displayed as a fraction of its GDP
+* per Capita -- each state's values are displayed as a fraction of its population 
+* per Land Area -- each state's values are displayed as a fraction of its land area
+
+# Display
+
+* The graph is a series of one- or two-sided stacked bar charts.
+* There is one bar for each state.
+* States are ordered from longest to shortest bars.
+* Each colored component in the bar corresponds to one of the checked Consumption or Production categories. * Production values (positive) stack rightward; Consumption values (negative) stack leftward.
+* If grouping is enabled, groups of related states will be separated by vertical space.
+* The units of the display can be found in the Enegy Scale control.
+
+# About the Data
+
+
+
+
