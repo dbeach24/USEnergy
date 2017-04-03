@@ -18,12 +18,13 @@ categories.produce = data.table(
     "NGMPB",
     "PAPRB",
     "NUETB",
-    "EMTCB",
-    "WWTCB",
-    "GETCB",
+
     "HYTCB",
-    "SOTCB",
-    "WYTCB"
+    "WWTCB",
+    "EMTCB",
+    "WYTCB",
+    "GETCB",
+    "SOTCB"
   ),
   name=c(
     "Import",
@@ -31,12 +32,12 @@ categories.produce = data.table(
     "Natural Gas",
     "Crude Oil",
     "Nuclear",
-    "Ethanol",
-    "Biomass",
-    "Geothermal",
     "Hydroelectric",
-    "Solar",
-    "Wind"
+    "Biomass",
+    "Ethanol",
+    "Wind",
+    "Geothermal",
+    "Solar"
   ),
   color=c(
     "#c0c0c0", # import/export grey
@@ -44,12 +45,20 @@ categories.produce = data.table(
     "#6baed6", # natural gassy blue
     "#807dba", # petroleum purple 4
     "#fc8d59", # nuclear orange
-    "#e5f5e0", # renewable green 1
-    "#c7e9c0", # renewable green 2
-    "#a1d99b", # renewable green 3
-    "#74c476", # renewable green 4
-    "#41ab5d", # renewable green 5
-    "#238b45"  # renewable green 6
+
+    "#005a32",    
+    "#238443",
+    "#41ab5d",
+    "#78c679",
+    "#addd8e",
+    "#d9f0a3"
+    
+    # "#e5f5e0", # renewable green 1
+    # "#c7e9c0", # renewable green 2
+    # "#a1d99b", # renewable green 3
+    # "#74c476", # renewable green 4
+    # "#41ab5d", # renewable green 5
+    # "#238b45"  # renewable green 6
   ),
   multiplier=1
 )
