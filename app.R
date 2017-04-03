@@ -6,6 +6,7 @@
 
 library(shiny)
 library(shinythemes)
+library(shinydashboard)
 library(data.table)
 library(plotly)
 library(cluster)
@@ -134,71 +135,136 @@ colorCheckboxGroup = function(id, label, cats, selected=c())  {
   )
 }
 
+buildControls <- function() {
+    div(
 
-# Define UI for application that draws a histogram
-ui <- fluidPage(theme=shinytheme("united"),
-   
-   # Application title
-   titlePanel("The 50 States of US Energy"),
-
-   
-   # Sidebar with a slider input for number of bins 
-   sidebarLayout(
-      sidebarPanel(
-
-         tags$a(href="UserGuide.html", target="_blank", "User's Guide"),
-         tags$div(style="width:30px; display:inline-block;"),
-         tags$a(href="EnergyNotebook.nb.html", target="_blank", "Lab Notebook"),
-         
-         img(src="EDemandOverview.png", width="100%"),
-
-         sliderInput(inputId="year",
-                     label="Year Range",
-                     min = 1960,
-                     max = 2014,
-                     value = c(2000, 2014),
-                     sep = ""),
-
-         fluidRow(
-           colorCheckboxGroup("consumption", "Consumption", categories.consume[code!="TETCB"]),
-           colorCheckboxGroup("production", "Production", categories.produce,
-                              selected = c("NUETB", "CLPRB", "NGMPB", "PAPRB")
-           )
-        ),
-
-        # add extra vertical space here
-        br(),
-        br(),
-        
-        sliderInput(inputId="numGroups",
-                     label="Groups of Similar Energy Profiles",
-                     min = 1,
-                     max = 8,
-                     value = 3,
-                     sep = ""),
-
-        helpText(paste(
-          "Group states with similar energy profiles. ",
-          "Grouping is based on a state's relative energy proportions in the selected categories."
-        )),
-        
-        br(),
-        
-        selectInput(inputId="divisor",
-               label="Energy Scale",
-               choices=setNames(categories.divisor$code, categories.divisor$name)
-        ),
-        
-        helpText("Changes display scale. Does not affect grouping.")
-
+      img(src="EDemandOverview.png", width="100%"),
+      
+      sliderInput(inputId="year",
+                  label="Year Range",
+                  min = 1960,
+                  max = 2014,
+                  value = c(2000, 2014),
+                  sep = ""),
+      
+      fluidRow(
+        colorCheckboxGroup("consumption", "Consumption", categories.consume[code!="TETCB"]),
+        colorCheckboxGroup("production", "Production", categories.produce,
+                           selected = c("NUETB", "CLPRB", "NGMPB", "PAPRB")
+        )
       ),
       
-      # Show a plot of the generated distribution
-      mainPanel(
-         plotlyOutput("distPlot", height="1200px", width="700px")
+      # add extra vertical space here
+      br(),
+      
+      sliderInput(inputId="numGroups",
+                  label="Group by Energy Profile",
+                  min = 1,
+                  max = 8,
+                  value = 3,
+                  sep = ""),
+      
+      selectInput(inputId="divisor",
+                  label="Energy Scale",
+                  choices=setNames(categories.divisor$code, categories.divisor$name)
       )
+
+    )
+}
+
+# Define UI for application that draws a histogram
+ui <- dashboardPage(
+
+   skin="yellow",
+   
+   # Application title
+   dashboardHeader(title="The 50 States of US Energy", titleWidth=300),
+   dashboardSidebar(width=300,
+     sidebarMenu(
+       menuItem("Composition", tabName="composition", icon=icon("bar-chart")),
+       menuItem("Time Series", tabName="timeseries", icon=icon("area-chart")),
+       menuItem("User's Guide", tabName="guide", icon=icon("life-bouy")),
+       menuItem("Lab Notebook", tabName="notebook", icon=icon("book"))
+     ),
+     br(),
+     buildControls()
+   ),
+
+   dashboardBody(
+     tabItems(
+       tabItem("composition", plotlyOutput("compositionPlot", height="1200px", width="100%")),
+       tabItem("timeseries", plotlyOutput("timeseriesPlot", height="1200px", width="100%")),
+       tabItem("guide", includeMarkdown("www/UserGuide.Rmd")),
+       tabItem("notebook", includeMarkdown("EnergyNotebook.Rmd"))
+     )
    )
 )
+
+
+ribbonPlot = function(X, cats, divisor="abs", title="") {
+  data <- X
+
+  if(divisor == "abs") {
+    divcol = 1
+  } else {
+    divcol = data[, get(divisor)]
+  }
+
+  cumpos = rep(0, nrow(data))
+  cumneg = rep(0, nrow(data))
+  for(i in nrow(cats):1) {
+    code = cats$code[i]
+    if(cats$multiplier[i] > 0) {
+      data[, code] = cumpos + data[, get(code)]
+      cumpos = data[, get(code)]
+    } else {
+      data[, code] = cumneg + data[, get(code)]
+      cumneg = data[, get(code)]
+    }
+  }
+  
+  code <- cats$code[1]
+  name <- cats$name[1]
+  color <- cats$color[1]
+  multiplier <- cats$multiplier[1]
+  plot <- plot_ly(data,
+                  x=signif(data[, get(code)] * multiplier / divcol, 3),
+                  y=~year,
+                  name=name,
+                  type="area",
+                  mode="none",
+                  fill="tozerox",
+                  fillcolor=color,
+                  hoverinfo="x+text"
+  )
+
+  if(nrow(cats) >= 2) { 
+    for(i in 2:nrow(cats)) {
+      code <- cats$code[i]
+      name <- cats$name[i]
+      color <- cats$color[i]
+      multiplier <- cats$multiplier[i]
+      plot <- plot %>% add_trace(
+        x=signif(data[, get(code) * multiplier / divcol], 3),
+        type="area",
+        name=name,
+        fillcolor=color,
+        hoverinfo="x+text"
+      )
+    }
+  }
+  
+  plot <- plot %>% layout(
+    showlegend=F,
+    yaxis=list(autorange="reversed"),
+    xaxis=list(title="")
+  )
+
+  plot
+  
+}
+
+
 
 tornadoPlot = function(X, cats, divisor="abs", title="") {
   data <- X
@@ -305,7 +371,7 @@ server <- function(input, output, session) {
       updateCheckboxGroupInput(session, "consumption", selected=character(0))
     })
   
-    output$distPlot <- renderPlotly({
+    output$compositionPlot <- renderPlotly({
 
      year.range <- input$year
      year.first <- year.range[1]
@@ -390,6 +456,61 @@ server <- function(input, output, session) {
      
    })
 
+   output$timeseriesPlot <- renderPlotly({
+
+     year.range <- input$year
+     year.first <- year.range[1]
+     year.last <- year.range[2]
+     
+     pcodes <- input$production
+     ccodes <- input$consumption
+     
+     # need at least two codes for multiple cluster
+     codes = c(pcodes, ccodes)
+     if(length(codes) == 0) {
+       ccodes = c("TETCB")
+       codes = c("TETCB")
+     }
+     
+     categories <- rbindlist(list(
+       categories.produce[is.element(code, pcodes)],
+       categories.consume[is.element(code, ccodes)]
+     ))
+     
+     df = energy.all[year >= year.first & year <= year.last, .(
+       #state.name = first(state.name),
+       population = sum(population), 
+       gdp = sum(gdp),
+       area = first(area),
+       #latitude = first(latitude),
+       #longitude = first(longitude),
+       NUETB = sum(NUETB),
+       CLTCB = sum(CLTCB),
+       NNTCB = sum(NNTCB),
+       DFTCB = sum(DFTCB),
+       JFTCB = sum(JFTCB),
+       LGTCB = sum(LGTCB),
+       MMTCB = sum(MMTCB),
+       POTCB2 = sum(POTCB2),
+       ESTCB = sum(ESTCB),
+       TETCB = sum(TETCB),
+       EMTCB = sum(EMTCB),
+       WWTCB = sum(WWTCB),
+       GETCB = sum(GETCB),
+       HYTCB = sum(HYTCB),
+       SOTCB = sum(SOTCB),
+       WYTCB = sum(WYTCB),
+       CLPRB = sum(CLPRB),
+       NGMPB = sum(NGMPB),
+       PAPRB = sum(PAPRB),
+       export = sum(export),
+       import = sum(import)
+     ), by=.(year)]
+     
+     ribbonPlot(df, categories)
+          
+   })
+    
 }
 
 # Run the application 
