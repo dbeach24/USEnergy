@@ -45,20 +45,12 @@ categories.produce = data.table(
     "#6baed6", # natural gassy blue
     "#807dba", # petroleum purple 4
     "#fc8d59", # nuclear orange
-
-    "#005a32",    
-    "#238443",
-    "#41ab5d",
-    "#78c679",
-    "#addd8e",
-    "#d9f0a3"
-    
-    # "#e5f5e0", # renewable green 1
-    # "#c7e9c0", # renewable green 2
-    # "#a1d99b", # renewable green 3
-    # "#74c476", # renewable green 4
-    # "#41ab5d", # renewable green 5
-    # "#238b45"  # renewable green 6
+    "#005a32", # renewable green 1
+    "#238443", # renewable green 2
+    "#41ab5d", # renewable green 3
+    "#78c679", # renewable green 4
+    "#addd8e", # renewable green 5
+    "#d9f0a3"  # renewable green 6
   ),
   multiplier=1
 )
@@ -68,11 +60,11 @@ categories.consume = data.table(
     "export",
     "CLTCB",
     "NNTCB",
+    "MMTCB",
     "DFTCB",
+    "POTCB2",
     "JFTCB",
     "LGTCB",
-    "MMTCB",
-    "POTCB2",
     "ESTCB",
     "TETCB"
   ),
@@ -80,11 +72,11 @@ categories.consume = data.table(
     "Export",
     "Coal",
     "Natural Gas",
+    "Gasoline",
     "Distillate Fuel",
+    "Other Petroleum",
     "Jet Fuel",
     "Propane",
-    "Gasoline",
-    "Other Petroleum",
     "Electricity",
     "Total Consumption"
   ),
@@ -92,11 +84,20 @@ categories.consume = data.table(
     "#C0C0C0", # import/export grey
     "#737373", # coal grey
     "#6baed6", # natural gassy blue
-    "#dadaeb", # petroleum purple 1
-    "#bcbddc", # petroleum purple 2
-    "#9e9ac8", # petroleum purple 3
-    "#807dba", # petroleum purple 4
-    "#6a51a3", # petroleum purple 5
+
+    
+    "#7a0177",
+    "#ae017e",
+    "#dd3497",
+    "#f768a1",
+    "#fa9fb5",
+    
+    # "#dadaeb", # petroleum purple 1
+    # "#bcbddc", # petroleum purple 2
+    # "#9e9ac8", # petroleum purple 3
+    # "#807dba", # petroleum purple 4
+    # "#6a51a3", # petroleum purple 5
+
     "#ffeda0", # electric yellow
     "#80c0ff"  # total blue
   ),
@@ -219,6 +220,8 @@ ribbonPlot = function(X, cats, divisor="abs", title="") {
     divcol = data[, get(divisor)]
   }
 
+  cats <- cats[nrow(cats):1]
+  
   cumpos = rep(0, nrow(data))
   cumneg = rep(0, nrow(data))
   for(i in nrow(cats):1) {
