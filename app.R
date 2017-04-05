@@ -13,21 +13,19 @@ library(cluster)
 
 categories.produce = data.table(
   code=c(
-    "import",
     "CLPRB",
     "NGMPB",
     "PAPRB",
     "NUETB",
-
     "HYTCB",
     "WWTCB",
     "EMTCB",
     "WYTCB",
     "GETCB",
-    "SOTCB"
+    "SOTCB",
+    "import"
   ),
   name=c(
-    "Import",
     "Coal",
     "Natural Gas",
     "Crude Oil",
@@ -37,27 +35,27 @@ categories.produce = data.table(
     "Ethanol",
     "Wind",
     "Geothermal",
-    "Solar"
+    "Solar",
+    "Import"
   ),
   color=c(
-    "#c0c0c0", # import/export grey
     "#737373", # coal grey
     "#6baed6", # natural gassy blue
-    "#807dba", # petroleum purple 4
+    "#7a0177", # petroleum purple 1
     "#fc8d59", # nuclear orange
     "#005a32", # renewable green 1
     "#238443", # renewable green 2
     "#41ab5d", # renewable green 3
     "#78c679", # renewable green 4
     "#addd8e", # renewable green 5
-    "#d9f0a3"  # renewable green 6
+    "#d9f0a3", # renewable green 6
+    "#c0c0c0"  # import/export grey
   ),
   multiplier=1
 )
 
 categories.consume = data.table(
   code = c(
-    "export",
     "CLTCB",
     "NNTCB",
     "MMTCB",
@@ -66,10 +64,10 @@ categories.consume = data.table(
     "JFTCB",
     "LGTCB",
     "ESTCB",
+    "export",
     "TETCB"
   ),
   name = c(
-    "Export",
     "Coal",
     "Natural Gas",
     "Gasoline",
@@ -78,27 +76,19 @@ categories.consume = data.table(
     "Jet Fuel",
     "Propane",
     "Electricity",
+    "Export",
     "Total Consumption"
   ),
   color = c(
-    "#C0C0C0", # import/export grey
     "#737373", # coal grey
     "#6baed6", # natural gassy blue
-
-    
-    "#7a0177",
-    "#ae017e",
-    "#dd3497",
-    "#f768a1",
-    "#fa9fb5",
-    
-    # "#dadaeb", # petroleum purple 1
-    # "#bcbddc", # petroleum purple 2
-    # "#9e9ac8", # petroleum purple 3
-    # "#807dba", # petroleum purple 4
-    # "#6a51a3", # petroleum purple 5
-
+    "#7a0177", # petroleum purple 1
+    "#ae017e", # petroleum purple 2
+    "#dd3497", # petroleum purple 3
+    "#f768a1", # petroleum purple 4
+    "#fa9fb5", # petroleum purple 5
     "#ffeda0", # electric yellow
+    "#C0C0C0", # import/export grey
     "#80c0ff"  # total blue
   ),
   multiplier = -1
@@ -211,7 +201,7 @@ ui <- dashboardPage(
 )
 
 
-ribbonPlot = function(X, cats, divisor="abs", title="") {
+ribbonPlot = function(X, cats, divisor="abs", title="", minX=NA, maxX=NA) {
   data <- X
 
   if(divisor == "abs") {
@@ -239,16 +229,20 @@ ribbonPlot = function(X, cats, divisor="abs", title="") {
   name <- cats$name[1]
   color <- cats$color[1]
   multiplier <- cats$multiplier[1]
+  xvals = data[, get(code)] * multiplier / divcol
   plot <- plot_ly(data,
-                  x=signif(data[, get(code)] * multiplier / divcol, 3),
+                  x=xvals,
                   y=~year,
                   name=name,
-                  type="area",
+                  type="scatter",
                   mode="none",
                   fill="tozerox",
                   fillcolor=color,
                   hoverinfo="x+text"
   )
+  
+  gxmin = min(xvals)
+  gxmax = max(xvals)
 
   if(nrow(cats) >= 2) { 
     for(i in 2:nrow(cats)) {
@@ -256,23 +250,36 @@ ribbonPlot = function(X, cats, divisor="abs", title="") {
       name <- cats$name[i]
       color <- cats$color[i]
       multiplier <- cats$multiplier[i]
+
+      xvals = data[, get(code) * multiplier / divcol]
+      gxmin = min(gxmin, xvals)
+      gxmax = max(gxmax, xvals)
+      
       plot <- plot %>% add_trace(
-        x=signif(data[, get(code) * multiplier / divcol], 3),
-        type="area",
+        x=xvals,
+        y=~year,
         name=name,
+        type="scatter",
+        mode="none",
+        fill="tozerox",
         fillcolor=color,
         hoverinfo="x+text"
       )
     }
   }
   
+  xaxis=list(title="")
+  if(!is.na(minX)) {
+    xaxis$range = c(minX, maxX)
+  }
+  
   plot <- plot %>% layout(
     showlegend=F,
     yaxis=list(autorange="reversed"),
-    xaxis=list(title="")
+    xaxis=xaxis
   )
 
-  plot
+  list(plot=plot, gxmin=gxmin, gxmax=gxmax)
   
 }
 
@@ -343,8 +350,10 @@ tornadoPlot = function(X, cats, divisor="abs", title="") {
   return(plot)
 }
 
-do_cluster <- function(df, cats, centers, divisor) {
+do_cluster <- function(df, cats, centers, divisor, seed=42, nstart=10) {
 
+  set.seed(seed)
+  
   total = 0
   for(cat in cats) {
     total = total + df[, get(cat)]
@@ -355,7 +364,7 @@ do_cluster <- function(df, cats, centers, divisor) {
   }
   cluster.df$state = NULL
   
-  clus = kmeans(cluster.df, centers=centers)
+  clus = kmeans(cluster.df, centers=centers, nstart=nstart)
 
   cluster.df$cluster = clus$cluster
   cluster.df$total = total
@@ -484,18 +493,19 @@ server <- function(input, output, session) {
        codes = c("TETCB")
      }
      
-     categories <- rbindlist(list(
-       categories.produce[is.element(code, pcodes)],
-       categories.consume[is.element(code, ccodes)]
-     ))
+     clusters.num = input$numGroups
      
-     df = energy.all[year >= year.first & year <= year.last, .(
-       #state.name = first(state.name),
+     if(length(codes) <= 1) {
+       clusters.num = 1
+     }
+     
+     clusterdf = energy.all[year >= year.first & year <= year.last, .(
+       state.name = first(state.name),
        population = sum(population), 
        gdp = sum(gdp),
        area = first(area),
-       #latitude = first(latitude),
-       #longitude = first(longitude),
+       latitude = first(latitude),
+       longitude = first(longitude),
        NUETB = sum(NUETB),
        CLTCB = sum(CLTCB),
        NNTCB = sum(NNTCB),
@@ -517,10 +527,104 @@ server <- function(input, output, session) {
        PAPRB = sum(PAPRB),
        export = sum(export),
        import = sum(import)
-     ), by=.(year)]
+     ), by=.(state)]
      
-     ribbonPlot(df, categories)
+     if(clusters.num > 1) {
+       clusterdf$cluster = do_cluster(clusterdf, c(pcodes, ccodes), clusters.num, input$divisor)
+     } else {
+       clusterdf$cluster = factor(1, levels=c(1))
+     }
+     
+     categories <- rbindlist(list(
+       categories.produce[is.element(code, pcodes)],
+       categories.consume[is.element(code, ccodes)]
+     ))
+
+     xmin <- 0
+     xmax <- 0
+
+     for(c in 1:clusters.num) {
+       
+       states <- clusterdf[cluster==c]$state
+       
+       df <- energy.all[year >= year.first
+                        & year <= year.last
+                        & is.element(state, states), .(
+                          population = sum(population),
+                          gdp = sum(gdp),
+                          area = sum(area),
+                          NUETB = sum(NUETB),
+                          CLTCB = sum(CLTCB),
+                          NNTCB = sum(NNTCB),
+                          DFTCB = sum(DFTCB),
+                          JFTCB = sum(JFTCB),
+                          LGTCB = sum(LGTCB),
+                          MMTCB = sum(MMTCB),
+                          POTCB2 = sum(POTCB2),
+                          ESTCB = sum(ESTCB),
+                          TETCB = sum(TETCB),
+                          EMTCB = sum(EMTCB),
+                          WWTCB = sum(WWTCB),
+                          GETCB = sum(GETCB),
+                          HYTCB = sum(HYTCB),
+                          SOTCB = sum(SOTCB),
+                          WYTCB = sum(WYTCB),
+                          CLPRB = sum(CLPRB),
+                          NGMPB = sum(NGMPB),
+                          PAPRB = sum(PAPRB),
+                          export = sum(export),
+                          import = sum(import)
+                        ), by=.(year)]
+       
+       plotdata <- ribbonPlot(df, categories, divisor=input$divisor)
+       xmin <- min(xmin, plotdata$gxmin)
+       xmax <- max(xmax, plotdata$gxmax)
+       
+     }
           
+     plots <- vector("list", clusters.num)
+     
+     for(c in 1:clusters.num) {
+       
+       states <- clusterdf[cluster==c]$state
+
+       df <- energy.all[year >= year.first
+                       & year <= year.last
+                       & is.element(state, states), .(
+         population = sum(population),
+         gdp = sum(gdp),
+         area = sum(area),
+         NUETB = sum(NUETB),
+         CLTCB = sum(CLTCB),
+         NNTCB = sum(NNTCB),
+         DFTCB = sum(DFTCB),
+         JFTCB = sum(JFTCB),
+         LGTCB = sum(LGTCB),
+         MMTCB = sum(MMTCB),
+         POTCB2 = sum(POTCB2),
+         ESTCB = sum(ESTCB),
+         TETCB = sum(TETCB),
+         EMTCB = sum(EMTCB),
+         WWTCB = sum(WWTCB),
+         GETCB = sum(GETCB),
+         HYTCB = sum(HYTCB),
+         SOTCB = sum(SOTCB),
+         WYTCB = sum(WYTCB),
+         CLPRB = sum(CLPRB),
+         NGMPB = sum(NGMPB),
+         PAPRB = sum(PAPRB),
+         export = sum(export),
+         import = sum(import)
+       ), by=.(year)]
+       
+       plotdata <- ribbonPlot(df, categories, divisor=input$divisor, minX=xmin, maxX=xmax)
+       
+       plots[[c]] <- plotdata$plot
+
+     }
+
+     subplot(plots, nrows=1, shareY=T)
+
    })
     
 }
